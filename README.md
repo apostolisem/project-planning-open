@@ -36,24 +36,6 @@ python -m projectplans
 
 On Windows, `pythonw app.pyw` runs without a console window.
 
-## Build (Windows)
-
-PyInstaller must run on Windows to produce a Windows `.exe`.
-
-PowerShell:
-
-```
-.\build_windows.ps1
-```
-
-Command Prompt:
-
-```
-build_windows.bat
-```
-
-The output executable is `dist\ProjectPlans.exe`.
-
 ## Usage
 
 Modes
