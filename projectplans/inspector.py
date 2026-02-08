@@ -109,6 +109,7 @@ class InspectorPanel(QWidget):
         self.target_row_combo = QComboBox()
         self.size_spin = QSpinBox()
         self.arrowheads_combo = QComboBox()
+        self.arrow_direction_combo = QComboBox()
         self.reverse_direction_button = QPushButton("Reverse")
         self.align_combo = QComboBox()
         self.color_button = QPushButton("Color")
@@ -143,6 +144,7 @@ class InspectorPanel(QWidget):
         layout.addRow("Target Row", self.target_row_combo)
         layout.addRow("Size", self.size_spin)
         layout.addRow("Arrowheads", self.arrowheads_combo)
+        layout.addRow("Arrow Direction", self.arrow_direction_combo)
         layout.addRow("Direction", self.reverse_direction_button)
         layout.addRow("Align", self.align_combo)
         layout.addRow("Color", self.color_button)
@@ -161,6 +163,7 @@ class InspectorPanel(QWidget):
         self.target_row_combo.currentIndexChanged.connect(self._apply_target_row)
         self.size_spin.valueChanged.connect(self._apply_size)
         self.arrowheads_combo.currentIndexChanged.connect(self._apply_arrowheads)
+        self.arrow_direction_combo.currentIndexChanged.connect(self._apply_arrow_direction)
         self.reverse_direction_button.clicked.connect(self._reverse_direction)
         self.align_combo.currentIndexChanged.connect(self._apply_alignment)
         self.color_button.clicked.connect(self._pick_color)
@@ -176,6 +179,9 @@ class InspectorPanel(QWidget):
         self.arrowheads_combo.addItem("End", "end")
         self.arrowheads_combo.addItem("Start", "start")
         self.arrowheads_combo.addItem("Both", "both")
+        self.arrow_direction_combo.addItem("None", "none")
+        self.arrow_direction_combo.addItem("Left", "left")
+        self.arrow_direction_combo.addItem("Right", "right")
 
     def set_enabled(self, enabled: bool) -> None:
         self.text_input.setEnabled(enabled)
@@ -186,6 +192,7 @@ class InspectorPanel(QWidget):
         self.target_row_combo.setEnabled(enabled)
         self.size_spin.setEnabled(enabled)
         self.arrowheads_combo.setEnabled(enabled)
+        self.arrow_direction_combo.setEnabled(enabled)
         self.reverse_direction_button.setEnabled(enabled)
         self.align_combo.setEnabled(enabled)
         self.color_button.setEnabled(enabled)
@@ -252,6 +259,11 @@ class InspectorPanel(QWidget):
             self.size_spin.setValue(obj.size)
         with QSignalBlocker(self.arrowheads_combo):
             self._set_combo_value(self.arrowheads_combo, self._arrowheads_value(obj))
+        with QSignalBlocker(self.arrow_direction_combo):
+            self._set_combo_value(
+                self.arrow_direction_combo,
+                self._arrow_direction_value(obj),
+            )
         with QSignalBlocker(self.align_combo):
             self._set_combo_value(self.align_combo, obj.text_align)
         with QSignalBlocker(self.opacity_spin):
@@ -289,6 +301,7 @@ class InspectorPanel(QWidget):
         is_textbox = kind == "textbox"
         is_link = kind == "link"
         is_connector = kind == "connector"
+        is_box = kind == "box"
         self._set_field_visible(self.text_input, not is_link and not is_connector)
         self._set_field_visible(
             self.duration_weeks,
@@ -300,15 +313,23 @@ class InspectorPanel(QWidget):
             and not is_deadline
             and not is_textbox,
         )
-        self._set_field_visible(self.target_week, not is_link and is_arrow)
-        self._set_field_visible(self.target_row_combo, not is_link and is_arrow)
+        self._set_field_visible(self.target_week, False)
+        self._set_field_visible(self.target_row_combo, False)
         self._set_field_visible(
             self.row_combo,
-            not is_link and not is_connector and not is_textbox and not is_deadline,
+            not is_link
+            and not is_connector
+            and not is_textbox
+            and not is_deadline
+            and not is_arrow,
         )
-        self._set_field_visible(self.start_week, not is_link and not is_connector and not is_textbox)
+        self._set_field_visible(
+            self.start_week,
+            not is_link and not is_connector and not is_textbox and not is_arrow,
+        )
         self._set_field_visible(self.size_spin, not is_link and not is_textbox)
         self._set_field_visible(self.arrowheads_combo, is_arrow or is_connector)
+        self._set_field_visible(self.arrow_direction_combo, is_box)
         self._set_field_visible(self.reverse_direction_button, is_arrow or is_connector)
         self._set_field_visible(self.align_combo, not is_link and not is_connector)
         self._set_field_visible(self.color_button, not is_link)
@@ -405,6 +426,18 @@ class InspectorPanel(QWidget):
             self._current_obj_id,
             {"arrow_head_start": start, "arrow_head_end": end},
             "Edit Arrowheads",
+        )
+
+    def _apply_arrow_direction(self) -> None:
+        if not self._current_obj_id:
+            return
+        value = self.arrow_direction_combo.currentData()
+        if value is None:
+            return
+        self.controller.update_object(
+            self._current_obj_id,
+            {"arrow_direction": value},
+            "Edit Arrow Direction",
         )
 
     def _reverse_direction(self) -> None:
@@ -540,6 +573,13 @@ class InspectorPanel(QWidget):
         if start:
             return "start"
         return "end"
+
+    @staticmethod
+    def _arrow_direction_value(obj) -> str:
+        value = str(getattr(obj, "arrow_direction", "none") or "none").lower()
+        if value not in ("none", "left", "right"):
+            return "none"
+        return value
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:

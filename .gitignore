@@ -6,3 +6,4 @@ __pycache__/
 version.txt
 .env
 updates/
+sync_existing_files.py

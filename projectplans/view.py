@@ -246,6 +246,9 @@ class CanvasView(QGraphicsView):
         return side, offset
 
     def _anchor_point_for_item(self, item, side: str, offset: float) -> QPointF:
+        custom_anchor = getattr(item, "anchor_local_point", None)
+        if callable(custom_anchor):
+            return item.mapToScene(custom_anchor(side, offset))
         bounds = item.boundingRect()
         width = max(1.0, bounds.width())
         height = max(1.0, bounds.height())

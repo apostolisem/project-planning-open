@@ -6,6 +6,7 @@ from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QPainter,
     QPainterPath,
     QPen,
@@ -23,6 +24,7 @@ from PyQt6.QtWidgets import (
     QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsTextItem,
+    QToolTip,
     QStyle,
     QStyleOptionGraphicsItem,
 )
@@ -91,6 +93,18 @@ def _draw_arrowhead(
         painter.setPen(Qt.PenStyle.NoPen)
     painter.drawPolygon(QPolygonF([end, left, right]))
     painter.restore()
+
+
+def _normalize_arrow_direction(value: object) -> str:
+    direction = str(value or "none").strip().lower()
+    if direction not in ("none", "left", "right"):
+        return "none"
+    return direction
+
+
+def _arrow_tip_depth(width: float, height: float) -> float:
+    depth = max(8.0, height * 0.35)
+    return min(depth, max(1.0, width * 0.45))
 
 
 def _textbox_anchor_point(obj, side: str | None, offset: float | None) -> QPointF:
@@ -220,7 +234,11 @@ def _object_bounds_for_connector(obj, layout) -> QRectF | None:
 
 
 def _anchor_point_for_bounds(
-    bounds: QRectF, side: str | None, offset: float | None
+    bounds: QRectF,
+    side: str | None,
+    offset: float | None,
+    *,
+    arrow_direction: str = "none",
 ) -> QPointF:
     offset_value = float(offset or 0.5)
     if offset_value < 0.0:
@@ -233,13 +251,27 @@ def _anchor_point_for_bounds(
     top = bounds.top()
     right = bounds.right()
     bottom = bounds.bottom()
+    direction = _normalize_arrow_direction(arrow_direction)
+    depth = _arrow_tip_depth(width, height)
+    edge_factor = abs((offset_value * 2.0) - 1.0)
+    center_factor = 1.0 - edge_factor
     if side == "left":
-        return QPointF(left, top + (height * offset_value))
+        x = left
+        if direction == "left":
+            x = left + (depth * edge_factor)
+        elif direction == "right":
+            x = left + (depth * center_factor)
+        return QPointF(x, top + (height * offset_value))
     if side == "top":
         return QPointF(left + (width * offset_value), top)
     if side == "bottom":
         return QPointF(left + (width * offset_value), bottom)
-    return QPointF(right, top + (height * offset_value))
+    x = right
+    if direction == "right":
+        x = right - (depth * edge_factor)
+    elif direction == "left":
+        x = right - (depth * center_factor)
+    return QPointF(x, top + (height * offset_value))
 
 
 def _apply_text_alignment(text_item: QGraphicsTextItem, align: str) -> None:
@@ -437,6 +469,9 @@ class GridItem(QGraphicsObject):
         self.scene_ref = scene_ref
         self.setZValue(-1000)
         self._rect = QRectF()
+        self._hover_week: int | None = None
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
     def boundingRect(self) -> QRectF:
         return QRectF(self._rect)
@@ -446,6 +481,44 @@ class GridItem(QGraphicsObject):
             return
         self.prepareGeometryChange()
         self._rect = QRectF(rect)
+
+    def _week_for_hover_pos(self, pos: QPointF) -> int | None:
+        scene = self.scene_ref
+        layout = scene.layout
+        week_y = (
+            scene.header_year_height
+            + scene.header_quarter_height
+            + scene.header_month_height
+        )
+        if not (week_y <= pos.y() < (week_y + scene.header_week_height)):
+            return None
+        if pos.x() < layout.label_width:
+            return None
+        return layout.week_from_x(pos.x(), snap=False)
+
+    def _clear_week_tooltip(self) -> None:
+        if self._hover_week is None:
+            return
+        self._hover_week = None
+        QToolTip.hideText()
+
+    def hoverMoveEvent(self, event) -> None:
+        week = self._week_for_hover_pos(event.pos())
+        if week is None:
+            self._clear_week_tooltip()
+            super().hoverMoveEvent(event)
+            return
+        if week != self._hover_week:
+            self._hover_week = week
+            week_start = self.scene_ref.layout.week_index_to_date(
+                self.scene_ref.model.year, week
+            )
+            QToolTip.showText(event.screenPos(), week_start.isoformat())
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event) -> None:
+        self._clear_week_tooltip()
+        super().hoverLeaveEvent(event)
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
         scene = self.scene_ref
@@ -457,6 +530,18 @@ class GridItem(QGraphicsObject):
 
         header_rect = QRectF(rect.left(), 0, rect.width(), layout.header_height)
         painter.fillRect(header_rect, QColor(248, 248, 248))
+
+        current_week_x: float | None = None
+        if scene.show_current_week:
+            today = date.today()
+            iso_year, iso_week, _ = today.isocalendar()
+            base_week = layout.week_index_for_iso_year(model.year, iso_year)
+            current_week = base_week + (iso_week - 1)
+            current_week_x = layout.week_left_x(current_week)
+            current_week_rect = QRectF(
+                current_week_x, rect.top(), layout.week_width, rect.height()
+            )
+            painter.fillRect(current_week_rect, QColor(210, 232, 255, 130))
 
         pen_grid = QPen(QColor(220, 220, 220))
         pen_grid.setWidth(1)
@@ -640,17 +725,29 @@ class GridItem(QGraphicsObject):
                 painter.setPen(pen_quarter)
                 painter.drawLine(int(x_quarter), int(rect.top()), int(x_quarter), int(rect.bottom()))
 
-        if scene.show_current_week:
-            today = date.today()
-            iso_year, iso_week, _ = today.isocalendar()
-            base_week = layout.week_index_for_iso_year(model.year, iso_year)
-            current_week = base_week + (iso_week - 1)
-            x_current = layout.week_center_x(current_week)
-            pen_current = QPen(QColor(190, 190, 190))
-            pen_current.setWidth(1)
-            painter.setPen(pen_current)
-            painter.drawLine(int(x_current), int(rect.top()), int(x_current), int(rect.bottom()))
-
+        if current_week_x is not None:
+            now_rect = QRectF(current_week_x, 0, layout.week_width, scene.header_year_height)
+            now_label = "TODAY"
+            now_font = QFont(painter.font())
+            now_font.setBold(True)
+            max_label_width = max(0.0, now_rect.width() - 4.0)
+            if max_label_width > 0.0:
+                min_point_size = 6.0
+                point_size = now_font.pointSizeF()
+                if point_size <= 0.0:
+                    point_size = 10.0
+                    now_font.setPointSizeF(point_size)
+                metrics = QFontMetricsF(now_font)
+                while (
+                    metrics.horizontalAdvance(now_label) > max_label_width
+                    and point_size > min_point_size
+                ):
+                    point_size = max(min_point_size, point_size - 0.5)
+                    now_font.setPointSizeF(point_size)
+                    metrics = QFontMetricsF(now_font)
+            painter.setFont(now_font)
+            painter.setPen(QPen(QColor(36, 79, 120)))
+            painter.drawText(now_rect, Qt.AlignmentFlag.AlignCenter, now_label)
 
 class BoxItem(QGraphicsRectItem):
     def __init__(self, object_id: str) -> None:
@@ -664,6 +761,7 @@ class BoxItem(QGraphicsRectItem):
         self._resize_start_rect = None
         self._resize_start_obj = None
         self._resize_offset = 0.0
+        self._arrow_direction = "none"
         self.text_item = InlineTextItem(self, object_id, allow_newlines=True)
         self._risk_badge = QGraphicsEllipseItem(self)
         self._risk_badge.setVisible(False)
@@ -681,6 +779,9 @@ class BoxItem(QGraphicsRectItem):
 
     def sync_from_model(self, obj, layout, show_missing_scope: bool | None = None) -> None:
         self.setZValue(obj.z_index)
+        self._arrow_direction = _normalize_arrow_direction(
+            getattr(obj, "arrow_direction", "none")
+        )
         row_height = layout.row_height(obj.row_id)
         height = row_height * size_scale(obj.size)
         width = max(1, obj.end_week - obj.start_week + 1) * layout.week_width
@@ -693,12 +794,91 @@ class BoxItem(QGraphicsRectItem):
         self.text_item.setDefaultTextColor(QColor(20, 20, 20))
         _set_text_content(self.text_item, obj)
         _apply_text_alignment(self.text_item, obj.text_align)
-        self._update_text_layout(width)
+        self._update_text_layout()
         self._update_risk_badge(obj, width, height, show_missing_scope=show_missing_scope)
 
-    def _update_text_layout(self, width: float) -> None:
-        self.text_item.setTextWidth(max(1.0, width - 6))
-        self.text_item.setPos(3, 2)
+    def _arrow_edge_insets(self, width: float, height: float) -> tuple[float, float]:
+        depth = _arrow_tip_depth(width, height)
+        if self._arrow_direction in ("left", "right"):
+            return depth, depth
+        return 0.0, 0.0
+
+    def _shape_polygon(self) -> QPolygonF:
+        rect = self.rect()
+        width = rect.width()
+        height = rect.height()
+        if width <= 0.0 or height <= 0.0:
+            return QPolygonF()
+        left = rect.left()
+        top = rect.top()
+        right = left + width
+        bottom = top + height
+        middle_y = top + (height / 2.0)
+        left_inset, right_inset = self._arrow_edge_insets(width, height)
+        if self._arrow_direction == "left":
+            return QPolygonF(
+                [
+                    QPointF(left + left_inset, top),
+                    QPointF(right, top),
+                    QPointF(right - right_inset, middle_y),
+                    QPointF(right, bottom),
+                    QPointF(left + left_inset, bottom),
+                    QPointF(left, middle_y),
+                ]
+            )
+        if self._arrow_direction == "right":
+            return QPolygonF(
+                [
+                    QPointF(left, top),
+                    QPointF(right - right_inset, top),
+                    QPointF(right, middle_y),
+                    QPointF(right - right_inset, bottom),
+                    QPointF(left, bottom),
+                    QPointF(left + left_inset, middle_y),
+                ]
+            )
+        return QPolygonF(
+            [
+                QPointF(left, top),
+                QPointF(right, top),
+                QPointF(right, bottom),
+                QPointF(left, bottom),
+            ]
+        )
+
+    def anchor_local_point(self, side: str, offset: float) -> QPointF:
+        rect = self.rect()
+        return _anchor_point_for_bounds(
+            rect,
+            side,
+            offset,
+            arrow_direction=self._arrow_direction,
+        )
+
+    def _update_text_layout(self) -> None:
+        rect = self.rect()
+        width = rect.width()
+        height = rect.height()
+        left_inset, right_inset = self._arrow_edge_insets(width, height)
+        left_padding = 3.0 + left_inset
+        total_padding = 6.0 + left_inset + right_inset
+        self.text_item.setTextWidth(max(1.0, width - total_padding))
+        self.text_item.setPos(left_padding, 2.0)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        polygon = self._shape_polygon()
+        if not polygon.isEmpty():
+            path.addPolygon(polygon)
+        return path
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        polygon = self._shape_polygon()
+        if polygon.isEmpty():
+            return
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawPolygon(polygon)
 
     def _update_risk_badge(
         self,
@@ -737,10 +917,15 @@ class BoxItem(QGraphicsRectItem):
             badge_pen.setWidthF(0.6)
             badge_pen.setCosmetic(True)
         self._risk_badge.setPen(badge_pen)
+        left_inset, right_inset = self._arrow_edge_insets(width, height)
         badge_size = min(12.0, max(6.0, height * 0.3))
         padding = 3.0
-        badge_size = min(badge_size, max(1.0, width - (padding * 2)))
-        x = width - badge_size - padding
+        usable_width = max(1.0, width - left_inset - right_inset - (padding * 2))
+        badge_size = min(badge_size, usable_width)
+        x = max(
+            left_inset + padding,
+            width - right_inset - badge_size - padding,
+        )
         y = padding
         self._risk_badge.setRect(x, y, badge_size, badge_size)
         self._risk_badge.setVisible(True)
@@ -853,7 +1038,7 @@ class BoxItem(QGraphicsRectItem):
                 width = max(min_width, new_right - left)
                 self.setPos(left, start_pos.y())
                 self.setRect(0, 0, width, start_rect.height())
-            self._update_text_layout(self.rect().width())
+            self._update_text_layout()
             if self._resize_start_obj:
                 self._update_risk_badge(
                     self._resize_start_obj, self.rect().width(), self.rect().height()
@@ -1742,11 +1927,17 @@ class ArrowItem(QGraphicsPathItem):
                         source_bounds,
                         obj.connector_source_side,
                         obj.connector_source_offset,
+                        arrow_direction=getattr(source, "arrow_direction", "none")
+                        if source.kind == "box"
+                        else "none",
                     )
                     end_point = _anchor_point_for_bounds(
                         target_bounds,
                         obj.connector_target_side,
                         obj.connector_target_offset,
+                        arrow_direction=getattr(target, "arrow_direction", "none")
+                        if target.kind == "box"
+                        else "none",
                     )
 
         if start_point is not None and end_point is not None:
@@ -1934,12 +2125,22 @@ class ConnectorItem(QGraphicsPathItem):
         target_visible = target_bounds is not None
         if source_bounds is not None:
             start_point = _anchor_point_for_bounds(
-                source_bounds, obj.connector_source_side, obj.connector_source_offset
+                source_bounds,
+                obj.connector_source_side,
+                obj.connector_source_offset,
+                arrow_direction=getattr(source, "arrow_direction", "none")
+                if source.kind == "box"
+                else "none",
             )
             cache["source"] = start_point
         if target_bounds is not None:
             end_point = _anchor_point_for_bounds(
-                target_bounds, obj.connector_target_side, obj.connector_target_offset
+                target_bounds,
+                obj.connector_target_side,
+                obj.connector_target_offset,
+                arrow_direction=getattr(target, "arrow_direction", "none")
+                if target.kind == "box"
+                else "none",
             )
             cache["target"] = end_point
         if not source_visible and not target_visible:

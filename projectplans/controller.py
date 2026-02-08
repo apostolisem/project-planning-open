@@ -31,7 +31,15 @@ from .constants import (
     TEXTBOX_MIN_WIDTH,
     TEXTBOX_NEW_OPACITY,
 )
-from .model import CanvasObject, Deliverable, ProjectModel, Topic, new_id, DEFAULT_TOPIC_COLORS
+from .model import (
+    CanvasObject,
+    Deliverable,
+    ProjectModel,
+    Topic,
+    new_id,
+    DEFAULT_TOPIC_COLORS,
+    normalize_arrow_direction,
+)
 
 
 class ProjectController:
@@ -193,12 +201,16 @@ class ProjectController:
         risks_html = obj.risks_html
         if risks_html == "":
             risks_html = None
+        arrow_direction = normalize_arrow_direction(getattr(obj, "arrow_direction", "none"))
+        if obj.kind != "box":
+            arrow_direction = "none"
         obj = replace(
             obj,
             text_html=text_html,
             notes_html=notes_html,
             scope_html=scope_html,
             risks_html=risks_html,
+            arrow_direction=arrow_direction,
         )
         if opacity < 0.0:
             opacity = 0.0

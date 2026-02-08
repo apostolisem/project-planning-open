@@ -156,6 +156,10 @@ class MainWindow(QMainWindow):
         export_png_action.triggered.connect(self.export_png)
         export_menu.addAction(export_png_action)
 
+        copy_image_clipboard_action = QAction("Copy Image to Clipboard", self)
+        copy_image_clipboard_action.triggered.connect(self.copy_image_to_clipboard)
+        export_menu.addAction(copy_image_clipboard_action)
+
         export_pdf_action = QAction("Planning (pdf)", self)
         export_pdf_action.triggered.connect(self.export_pdf)
         export_menu.addAction(export_pdf_action)
@@ -246,7 +250,7 @@ class MainWindow(QMainWindow):
         self.snap_grid_action.triggered.connect(self._toggle_snap_grid)
         view_menu.addAction(self.snap_grid_action)
 
-        self.current_week_action = QAction("Current Week Line", self)
+        self.current_week_action = QAction("Current Week Highlight", self)
         self.current_week_action.setCheckable(True)
         self.current_week_action.setChecked(True)
         self.current_week_action.triggered.connect(self._toggle_current_week_line)
@@ -920,6 +924,22 @@ class MainWindow(QMainWindow):
         if self._export_png_to_path(path, source_rect):
             self._prompt_open_export_folder("Export PNG", path)
 
+    def copy_image_to_clipboard(self) -> None:
+        source_rect = self._select_export_range()
+        if source_rect is None:
+            return
+        image = self._render_export_png_image(source_rect)
+        if image.isNull():
+            QMessageBox.warning(
+                self, "Copy Image to Clipboard", "Could not render planning image."
+            )
+            return
+        clipboard = QApplication.clipboard()
+        clipboard.setImage(image)
+        QMessageBox.information(
+            self, "Copy Image to Clipboard", "Planning image copied to clipboard."
+        )
+
     def export_pdf(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(
             self,
@@ -944,6 +964,10 @@ class MainWindow(QMainWindow):
             self._prompt_open_export_folder("Export PDF", path)
 
     def _export_png_to_path(self, path: Path, source_rect: QRectF) -> bool:
+        image = self._render_export_png_image(source_rect)
+        return image.save(str(path))
+
+    def _render_export_png_image(self, source_rect: QRectF) -> QImage:
         image_width = max(1, int(source_rect.width()))
         image_height = max(1, int(source_rect.height()))
         image = QImage(image_width, image_height, QImage.Format.Format_ARGB32)
@@ -952,7 +976,7 @@ class MainWindow(QMainWindow):
         target = QRectF(0, 0, image.width(), image.height())
         self._render_export(painter, source_rect, target)
         painter.end()
-        return image.save(str(path))
+        return image
 
     def export_risks(self) -> None:
         rows = self._collect_risk_rows()

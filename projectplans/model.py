@@ -29,6 +29,13 @@ DEFAULT_TOPIC_COLORS = [
 ]
 
 
+def normalize_arrow_direction(value: object) -> str:
+    direction = str(value or "none").strip().lower()
+    if direction not in ("none", "left", "right"):
+        return "none"
+    return direction
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 
@@ -99,6 +106,7 @@ class CanvasObject:
     arrow_mid_week: int | None = None
     arrow_head_start: bool = False
     arrow_head_end: bool = True
+    arrow_direction: str = "none"
     x: float | None = None
     y: float | None = None
     width: float | None = None
@@ -118,6 +126,9 @@ class CanvasObject:
     connector_target_offset: float | None = None
 
     def to_dict(self) -> dict:
+        arrow_direction = (
+            normalize_arrow_direction(self.arrow_direction) if self.kind == "box" else "none"
+        )
         data = {
             "id": self.id,
             "kind": self.kind,
@@ -139,6 +150,7 @@ class CanvasObject:
             "target_row_id": self.target_row_id,
             "target_week": self.target_week,
             "arrow_mid_week": self.arrow_mid_week,
+            "arrow_direction": arrow_direction,
         }
         if self.text_html is None:
             data.pop("text_html")
@@ -192,6 +204,8 @@ class CanvasObject:
             data["arrow_head_start"] = self.arrow_head_start
         if not self.arrow_head_end:
             data["arrow_head_end"] = self.arrow_head_end
+        if data.get("arrow_direction") == "none":
+            data.pop("arrow_direction")
         return data
 
     @staticmethod
@@ -199,6 +213,9 @@ class CanvasObject:
         color = data.get("color")
         if color is None and data.get("kind") == "textbox":
             color = "#FFFFFF"
+        arrow_direction = normalize_arrow_direction(data.get("arrow_direction", "none"))
+        if data.get("kind") != "box":
+            arrow_direction = "none"
         return CanvasObject(
             id=data["id"],
             kind=data["kind"],
@@ -226,6 +243,7 @@ class CanvasObject:
             arrow_mid_week=data.get("arrow_mid_week"),
             arrow_head_start=bool(data.get("arrow_head_start", False)),
             arrow_head_end=bool(data.get("arrow_head_end", True)),
+            arrow_direction=arrow_direction,
             x=data.get("x"),
             y=data.get("y"),
             width=data.get("width"),
