@@ -162,6 +162,9 @@ class CanvasView(QGraphicsView):
         else:
             self._apply_cursor(Qt.CursorShape.ArrowCursor)
 
+    def active_create_tool(self) -> str | None:
+        return self._create_tool
+
     def _cancel_connector_drag(self) -> None:
         if self._connector_preview is not None:
             scene = self.scene()
@@ -1295,6 +1298,9 @@ class CanvasView(QGraphicsView):
 
         kind = self._create_tool
         if kind == "textbox":
+            if not scene.show_textboxes:
+                self.activate_create_tool(None)
+                return
             start = self._create_start or end_pos
             x1 = min(start.x(), end_pos.x())
             x2 = max(start.x(), end_pos.x())
@@ -1463,9 +1469,11 @@ class CanvasView(QGraphicsView):
         insert_actions[insert_menu.addAction("Circle")] = "circle"
         insert_actions[insert_menu.addAction("Arrow")] = "arrow"
         insert_actions[insert_menu.addAction("Connector Arrow")] = "connector"
-        insert_actions[insert_menu.addAction("Textbox")] = "textbox"
+        insert_actions[insert_menu.addAction("Text Box")] = "textbox"
         for action, kind in insert_actions.items():
-            if kind in ("textbox", "deadline", "connector"):
+            if kind == "textbox":
+                action.setEnabled(can_insert and scene.show_textboxes)
+            elif kind in ("deadline", "connector"):
                 action.setEnabled(can_insert)
             else:
                 action.setEnabled(can_insert and has_rows)
@@ -1575,6 +1583,8 @@ class CanvasView(QGraphicsView):
     def _create_from_context(self, kind: str, pos) -> None:
         scene = self.scene()
         if scene is None or not scene.edit_mode:
+            return
+        if kind == "textbox" and not scene.show_textboxes:
             return
         if kind not in ("textbox", "deadline", "connector") and not scene.layout.rows:
             QMessageBox.information(self, "Add Object", "Add a topic or deliverable first.")

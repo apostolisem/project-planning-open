@@ -262,6 +262,12 @@ class MainWindow(QMainWindow):
         self.missing_scope_action.triggered.connect(self._toggle_missing_scope)
         view_menu.addAction(self.missing_scope_action)
 
+        self.text_boxes_action = QAction("Text Boxes", self)
+        self.text_boxes_action.setCheckable(True)
+        self.text_boxes_action.setChecked(True)
+        self.text_boxes_action.triggered.connect(self._toggle_text_boxes)
+        view_menu.addAction(self.text_boxes_action)
+
         self.add_topic_action = QAction("Add Topic", self)
         self.add_topic_action.triggered.connect(self.add_topic)
 
@@ -338,7 +344,7 @@ class MainWindow(QMainWindow):
         self.add_connector_action.triggered.connect(lambda: self.create_object("connector"))
         insert_menu.addAction(self.add_connector_action)
 
-        self.add_textbox_action = QAction("Textbox", self)
+        self.add_textbox_action = QAction("Text Box", self)
         self.add_textbox_action.setShortcut("X")
         self.add_textbox_action.triggered.connect(lambda: self.create_object("textbox"))
         insert_menu.addAction(self.add_textbox_action)
@@ -368,6 +374,7 @@ class MainWindow(QMainWindow):
         ]
 
         self.inspector_dock.visibilityChanged.connect(self._sync_properties_pane_action)
+        self._sync_textbox_insert_action()
 
     def _recent_file_entries(self) -> list[str]:
         value = self.settings.value("recent_files", [])
@@ -561,6 +568,7 @@ class MainWindow(QMainWindow):
             self.scene.set_edit_mode(not enabled)
             self.view.set_navigation_mode(enabled)
         self._apply_presentation_mode(self.presentation_mode_action.isChecked())
+        self._apply_text_boxes_visibility()
         self.scene.show_missing_scope = self.missing_scope_action.isChecked()
         self.scene.update_risk_badges()
 
@@ -618,6 +626,21 @@ class MainWindow(QMainWindow):
         self._apply_properties_visibility()
         if enabled:
             self.view.activate_create_tool(None)
+        self._sync_textbox_insert_action()
+
+    def _sync_textbox_insert_action(self) -> None:
+        enabled = self.scene.show_textboxes and not self.presentation_mode_action.isChecked()
+        self.add_textbox_action.setEnabled(enabled)
+
+    def _apply_text_boxes_visibility(self) -> None:
+        show_textboxes = self.text_boxes_action.isChecked()
+        visibility_changed = self.scene.show_textboxes != show_textboxes
+        self.scene.show_textboxes = show_textboxes
+        if not show_textboxes and self.view.active_create_tool() == "textbox":
+            self.view.activate_create_tool(None)
+        if visibility_changed:
+            self.scene.refresh_items(force_sync=True)
+        self._sync_textbox_insert_action()
 
     def _toggle_snap_grid(self) -> None:
         enabled = self.snap_grid_action.isChecked()
@@ -631,6 +654,9 @@ class MainWindow(QMainWindow):
     def _toggle_missing_scope(self) -> None:
         self.scene.show_missing_scope = self.missing_scope_action.isChecked()
         self.scene.update_risk_badges()
+
+    def _toggle_text_boxes(self) -> None:
+        self._apply_text_boxes_visibility()
 
     def _toggle_auto_export(self) -> None:
         enabled = self.auto_export_action.isChecked()
@@ -1111,8 +1137,11 @@ class MainWindow(QMainWindow):
 
     def _collect_risk_rows(self) -> list[list[str]]:
         layout = self.scene.layout
+        include_textboxes = self.scene.show_textboxes
         rows: list[list[str]] = []
         for obj in self.model.objects.values():
+            if not include_textboxes and obj.kind == "textbox":
+                continue
             if not obj.risks or not obj.risks.strip():
                 continue
             week_label = self._week_label(layout, obj.start_week)
@@ -1126,6 +1155,7 @@ class MainWindow(QMainWindow):
 
     def _collect_scope_lines(self, selected_rows: set[str]) -> tuple[list[str], int]:
         layout = self.scene.layout
+        include_textboxes = self.scene.show_textboxes
         selected_rows = set(selected_rows)
         selected_rows.add(CANVAS_ROW_ID)
         objects_by_row: dict[str, list] = {}
@@ -1133,6 +1163,8 @@ class MainWindow(QMainWindow):
         base_text_by_id: dict[str, list[str]] = {}
         for obj in self.model.objects.values():
             if obj.kind in ("link", "connector", "arrow"):
+                continue
+            if not include_textboxes and obj.kind == "textbox":
                 continue
             if obj.row_id not in selected_rows:
                 continue
@@ -1144,20 +1176,21 @@ class MainWindow(QMainWindow):
             row_objects.sort(key=lambda obj: (obj.start_week, obj.end_week, obj.id))
 
         linked_text: dict[str, list[str]] = {}
-        for link in self.model.objects.values():
-            if link.kind != "link":
-                continue
-            source_id = link.link_source_id
-            target_id = link.link_target_id
-            if not source_id or not target_id:
-                continue
-            source = self.model.objects.get(source_id)
-            if source is None or source.kind != "textbox":
-                continue
-            text = source.text.strip()
-            if not text:
-                continue
-            linked_text.setdefault(target_id, []).append(text)
+        if include_textboxes:
+            for link in self.model.objects.values():
+                if link.kind != "link":
+                    continue
+                source_id = link.link_source_id
+                target_id = link.link_target_id
+                if not source_id or not target_id:
+                    continue
+                source = self.model.objects.get(source_id)
+                if source is None or source.kind != "textbox":
+                    continue
+                text = source.text.strip()
+                if not text:
+                    continue
+                linked_text.setdefault(target_id, []).append(text)
 
         text_lines_by_id: dict[str, list[str]] = {}
         for obj_id, base_lines in base_text_by_id.items():
@@ -2329,6 +2362,8 @@ class MainWindow(QMainWindow):
         return None
 
     def create_object(self, kind: str) -> None:
+        if kind == "textbox" and not self.scene.show_textboxes:
+            return
         if not self.scene.layout.rows and kind not in ("textbox", "deadline", "connector"):
             QMessageBox.information(self, "Add Object", "Add a topic or deliverable first.")
             return
@@ -2405,6 +2440,15 @@ class MainWindow(QMainWindow):
         self.scene.show_missing_scope = missing_scope
         self.scene.update_risk_badges()
 
+        text_boxes_value = self.settings.value("view/show_text_boxes", True)
+        if isinstance(text_boxes_value, bool):
+            show_text_boxes = text_boxes_value
+        else:
+            show_text_boxes = str(text_boxes_value).lower() in ("1", "true", "yes")
+        with QSignalBlocker(self.text_boxes_action):
+            self.text_boxes_action.setChecked(show_text_boxes)
+        self._apply_text_boxes_visibility()
+
         properties_value = self.settings.value("view/show_properties_pane", True)
         if isinstance(properties_value, bool):
             show_properties = properties_value
@@ -2461,6 +2505,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("view/zoom", self.view.current_zoom)
         self.settings.setValue("view/current_week_line", self.scene.show_current_week)
         self.settings.setValue("view/show_missing_scope", self.scene.show_missing_scope)
+        self.settings.setValue("view/show_text_boxes", self.scene.show_textboxes)
         self.settings.setValue(
             "view/show_properties_pane", self.properties_pane_action.isChecked()
         )

@@ -51,6 +51,7 @@ class CanvasScene(QGraphicsScene):
         self.edit_mode = True
         self.show_current_week = True
         self.show_missing_scope = False
+        self.show_textboxes = True
         self.connector_cache = {}
         self.header_year_height = HEADER_YEAR_HEIGHT
         self.header_quarter_height = HEADER_QUARTER_HEIGHT
@@ -130,7 +131,7 @@ class CanvasScene(QGraphicsScene):
         min_x = self.layout.week_left_x(self.min_week)
         max_x = self.layout.week_left_x(self.max_week) + self.layout.week_width
         for obj in self.model.objects.values():
-            if obj.kind != "textbox" or obj.y is None:
+            if not self.show_textboxes or obj.kind != "textbox" or obj.y is None:
                 continue
             box_width = obj.width if obj.width is not None else TEXTBOX_MIN_WIDTH
             box_height = obj.height if obj.height is not None else TEXTBOX_MIN_HEIGHT
@@ -180,7 +181,11 @@ class CanvasScene(QGraphicsScene):
         new_cache: dict[str, object] = {}
 
         def should_display(obj) -> bool:
-            if obj.kind in ("textbox", "deadline", "link", "connector"):
+            if obj.kind == "textbox":
+                return self.show_textboxes
+            if obj.kind == "link":
+                return self.show_textboxes
+            if obj.kind in ("deadline", "connector"):
                 return True
             if obj.kind == "arrow":
                 attached = bool(obj.connector_source_id and obj.connector_target_id)
